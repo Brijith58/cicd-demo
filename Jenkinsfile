@@ -1,150 +1,144 @@
 // ─────────────────────────────────────────────────────────────
-// Jenkinsfile — Declarative CI/CD Pipeline
+// Jenkinsfile — Declarative CI/CD Pipeline (Windows Compatible)
 // Project : cicd-demo (Node.js + Docker)
-// Trigger : GitHub Webhook on push to main branch
-// Stages  : Checkout → Install → Test → Build → Deploy
 // ─────────────────────────────────────────────────────────────
 
 pipeline {
-    // Run on any available Jenkins agent
     agent any
 
-    // ── Environment variables ──────────────────────────────────
     environment {
-        IMAGE_NAME   = 'cicd-demo'          // Docker image name
-        IMAGE_TAG    = "v${BUILD_NUMBER}"   // Tag = Jenkins build number
-        CONTAINER_NAME = 'cicd-demo-app'    // Running container name
-        APP_PORT     = '3000'               // Port inside container
-        HOST_PORT    = '4000'               // Port exposed on host machine
+        IMAGE_NAME     = 'cicd-demo'
+        IMAGE_TAG      = "v${BUILD_NUMBER}"
+        CONTAINER_NAME = 'cicd-demo-app'
+        APP_PORT       = '3000'
+        HOST_PORT      = '4000'
     }
 
-    // ── Pipeline options ───────────────────────────────────────
     options {
-        // Keep only last 5 builds to save disk space
         buildDiscarder(logRotator(numToKeepStr: '5'))
-        // Fail if pipeline takes longer than 15 minutes
         timeout(time: 15, unit: 'MINUTES')
-        // Add timestamps to console output
         timestamps()
     }
 
-    // ── Pipeline Stages ────────────────────────────────────────
     stages {
 
-        // STAGE 1: Clone the repository from GitHub
+        // ───────────── CHECKOUT ─────────────
         stage('📥 Checkout') {
             steps {
                 echo '─────────────────────────────────────'
                 echo '📥 Cloning source code from GitHub...'
                 echo '─────────────────────────────────────'
-                // Jenkins SCM checkout (uses repo configured in job settings)
                 checkout scm
                 echo "✅ Code checked out. Build #${BUILD_NUMBER}"
             }
         }
 
-        // STAGE 2: Install Node.js dependencies
+        // ───────────── INSTALL ─────────────
         stage('📦 Install Dependencies') {
             steps {
-                echo '──────────────────────────────────────────'
-                echo '📦 Installing Node.js dependencies (npm)...'
-                echo '──────────────────────────────────────────'
-                sh 'node --version'
-                sh 'npm --version'
-                sh 'npm install'
-                echo '✅ Dependencies installed successfully'
+                echo '📦 Installing dependencies...'
+
+                bat '''
+                node -v
+                npm -v
+                npm install
+                '''
+
+                echo '✅ Dependencies installed'
             }
         }
 
-        // STAGE 3: Run basic application test
+        // ───────────── TEST ─────────────
         stage('🧪 Test') {
             steps {
-                echo '──────────────────────────────'
-                echo '🧪 Running application tests...'
-                echo '──────────────────────────────'
-                sh 'npm test'
+                echo '🧪 Running tests...'
+
+                bat '''
+                npm test
+                '''
+
                 echo '✅ Tests passed'
             }
         }
 
-        // STAGE 4: Build Docker image
+        // ───────────── BUILD DOCKER ─────────────
         stage('🐳 Build Docker Image') {
             steps {
-                echo '──────────────────────────────────────────'
-                echo "🐳 Building Docker image: ${IMAGE_NAME}:${IMAGE_TAG}"
-                echo '──────────────────────────────────────────'
-                sh """
-                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
+                echo "🐳 Building Docker image..."
+
+                bat """
+                docker build -t %IMAGE_NAME%:%IMAGE_TAG% .
+                docker tag %IMAGE_NAME%:%IMAGE_TAG% %IMAGE_NAME%:latest
                 """
+
                 echo "✅ Docker image built: ${IMAGE_NAME}:${IMAGE_TAG}"
             }
         }
 
-        // STAGE 5: Stop and remove any existing container, then deploy new one
+        // ───────────── DEPLOY ─────────────
         stage('🚀 Deploy Container') {
             steps {
-                echo '────────────────────────────────────────────────────'
-                echo "🚀 Deploying container: ${CONTAINER_NAME} on port ${HOST_PORT}"
-                echo '────────────────────────────────────────────────────'
-                sh """
-                    # Stop old container if it exists (ignore errors if not running)
-                    docker stop ${CONTAINER_NAME} || true
-                    docker rm   ${CONTAINER_NAME} || true
+                echo "🚀 Deploying container..."
 
-                    # Run new container
-                    docker run -d \\
-                        --name ${CONTAINER_NAME} \\
-                        -p ${HOST_PORT}:${APP_PORT} \\
-                        --restart unless-stopped \\
-                        ${IMAGE_NAME}:${IMAGE_TAG}
+                bat """
+                docker stop %CONTAINER_NAME% 2>nul
+                docker rm %CONTAINER_NAME% 2>nul
 
-                    echo '⏳ Waiting for container to start...'
-                    sleep 5
+                docker run -d ^
+                --name %CONTAINER_NAME% ^
+                -p %HOST_PORT%:%APP_PORT% ^
+                --restart unless-stopped ^
+                %IMAGE_NAME%:%IMAGE_TAG%
 
-                    # Verify the container is running
-                    docker ps | grep ${CONTAINER_NAME}
+                echo Waiting for container...
+                timeout /t 5
+
+                docker ps | findstr %CONTAINER_NAME%
                 """
-                echo "✅ Container deployed! App running at http://localhost:${HOST_PORT}"
+
+                echo "✅ App running at http://localhost:${HOST_PORT}"
             }
         }
 
-        // STAGE 6: Verify deployment with a quick health check
+        // ───────────── VERIFY ─────────────
         stage('✅ Verify') {
             steps {
-                echo '────────────────────────────────────'
-                echo '✅ Verifying deployment health check...'
-                echo '────────────────────────────────────'
-                sh """
-                    sleep 3
-                    curl -f http://localhost:${HOST_PORT}/health || exit 1
-                    echo ""
-                    echo "✅ Health check passed! Application is live."
+                echo '🔍 Verifying deployment...'
+
+                bat """
+                timeout /t 3
+                curl -f http://localhost:%HOST_PORT%/health
                 """
+
+                echo "✅ Health check passed!"
             }
         }
     }
 
-    // ── Post-build actions ─────────────────────────────────────
+    // ───────────── POST ACTIONS ─────────────
     post {
+
         success {
             echo '════════════════════════════════════════'
             echo "✅ BUILD #${BUILD_NUMBER} SUCCEEDED!"
-            echo "🌐 App live at: http://localhost:${HOST_PORT}"
+            echo "🌐 App: http://localhost:${HOST_PORT}"
             echo "🐳 Image: ${IMAGE_NAME}:${IMAGE_TAG}"
             echo '════════════════════════════════════════'
         }
+
         failure {
             echo '════════════════════════════════════════'
             echo "❌ BUILD #${BUILD_NUMBER} FAILED!"
-            echo '📋 Check the console output above for errors.'
             echo '════════════════════════════════════════'
-            // Clean up failed container if partially started
-            sh "docker stop ${CONTAINER_NAME} || true"
-            sh "docker rm   ${CONTAINER_NAME} || true"
+
+            bat """
+            docker stop %CONTAINER_NAME% 2>nul
+            docker rm %CONTAINER_NAME% 2>nul
+            """
         }
+
         always {
-            echo "📋 Pipeline finished. Status: ${currentBuild.currentResult}"
+            echo "📋 Pipeline Status: ${currentBuild.currentResult}"
         }
     }
 }
