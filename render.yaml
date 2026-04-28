@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: cicd-demo
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    
