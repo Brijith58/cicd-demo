@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
-// Jenkinsfile — Declarative CI/CD Pipeline (Windows Compatible)
-// Project : cicd-demo (Node.js + Docker)
+// Jenkinsfile — Full CI/CD Pipeline (Windows + Docker + Push)
+// Project : cicd-demo (Node.js)
 // ─────────────────────────────────────────────────────────────
 
 pipeline {
@@ -9,6 +9,7 @@ pipeline {
     environment {
         IMAGE_NAME     = 'cicd-demo'
         IMAGE_TAG      = "v${BUILD_NUMBER}"
+        DOCKERHUB_USER = 'brijith07'
         CONTAINER_NAME = 'cicd-demo-app'
         APP_PORT       = '3000'
         HOST_PORT      = '4000'
@@ -25,11 +26,9 @@ pipeline {
         // ───────────── CHECKOUT ─────────────
         stage('📥 Checkout') {
             steps {
-                echo '─────────────────────────────────────'
-                echo '📥 Cloning source code from GitHub...'
-                echo '─────────────────────────────────────'
+                echo '📥 Cloning code from GitHub...'
                 checkout scm
-                echo "✅ Code checked out. Build #${BUILD_NUMBER}"
+                echo "✅ Build #${BUILD_NUMBER}"
             }
         }
 
@@ -61,24 +60,41 @@ pipeline {
             }
         }
 
-        // ───────────── BUILD DOCKER ─────────────
+        // ───────────── BUILD ─────────────
         stage('🐳 Build Docker Image') {
             steps {
-                echo "🐳 Building Docker image..."
+                echo '🐳 Building Docker image...'
 
                 bat """
                 docker build -t %IMAGE_NAME%:%IMAGE_TAG% .
                 docker tag %IMAGE_NAME%:%IMAGE_TAG% %IMAGE_NAME%:latest
                 """
 
-                echo "✅ Docker image built: ${IMAGE_NAME}:${IMAGE_TAG}"
+                echo "✅ Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+            }
+        }
+
+        // ───────────── PUSH (OPTIONAL) ─────────────
+        stage('📤 Push to Docker Hub') {
+            steps {
+                echo '📤 Pushing image to Docker Hub...'
+
+                bat """
+                docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKERHUB_USER%/%IMAGE_NAME%:%IMAGE_TAG%
+                docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKERHUB_USER%/%IMAGE_NAME%:latest
+
+                docker push %DOCKERHUB_USER%/%IMAGE_NAME%:%IMAGE_TAG%
+                docker push %DOCKERHUB_USER%/%IMAGE_NAME%:latest
+                """
+
+                echo '✅ Image pushed to Docker Hub'
             }
         }
 
         // ───────────── DEPLOY ─────────────
         stage('🚀 Deploy Container') {
             steps {
-                echo "🚀 Deploying container..."
+                echo '🚀 Deploying container...'
 
                 bat """
                 docker stop %CONTAINER_NAME% 2>nul
@@ -91,7 +107,7 @@ pipeline {
                 %IMAGE_NAME%:%IMAGE_TAG%
 
                 echo Waiting for container...
-                timeout /t 5
+                ping 127.0.0.1 -n 6 > nul
 
                 docker ps | findstr %CONTAINER_NAME%
                 """
@@ -106,30 +122,30 @@ pipeline {
                 echo '🔍 Verifying deployment...'
 
                 bat """
-                timeout /t 3
+                ping 127.0.0.1 -n 4 > nul
                 curl -f http://localhost:%HOST_PORT%/health
                 """
 
-                echo "✅ Health check passed!"
+                echo '✅ Health check passed!'
             }
         }
     }
 
-    // ───────────── POST ACTIONS ─────────────
+    // ───────────── POST ─────────────
     post {
 
         success {
-            echo '════════════════════════════════════════'
-            echo "✅ BUILD #${BUILD_NUMBER} SUCCEEDED!"
-            echo "🌐 App: http://localhost:${HOST_PORT}"
-            echo "🐳 Image: ${IMAGE_NAME}:${IMAGE_TAG}"
-            echo '════════════════════════════════════════'
+            echo '════════════════════════════════════'
+            echo "✅ BUILD #${BUILD_NUMBER} SUCCESS"
+            echo "🌐 http://localhost:${HOST_PORT}"
+            echo "🐳 ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo '════════════════════════════════════'
         }
 
         failure {
-            echo '════════════════════════════════════════'
-            echo "❌ BUILD #${BUILD_NUMBER} FAILED!"
-            echo '════════════════════════════════════════'
+            echo '════════════════════════════════════'
+            echo "❌ BUILD FAILED"
+            echo '════════════════════════════════════'
 
             bat """
             docker stop %CONTAINER_NAME% 2>nul
@@ -138,7 +154,7 @@ pipeline {
         }
 
         always {
-            echo "📋 Pipeline Status: ${currentBuild.currentResult}"
+            echo "📋 Status: ${currentBuild.currentResult}"
         }
     }
 }
