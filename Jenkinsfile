@@ -41,9 +41,7 @@ pipeline {
         // ───────────── TEST ─────────────
         stage('🧪 Test') {
             steps {
-                bat '''
-                npm test
-                '''
+                bat 'npm test'
             }
         }
 
@@ -57,7 +55,7 @@ pipeline {
             }
         }
 
-        // ───────────── DOCKER HUB PUSH ─────────────
+        // ───────────── PUSH TO DOCKER HUB ─────────────
         stage('📤 Push to Docker Hub') {
             steps {
                 withCredentials([usernamePassword(
@@ -67,7 +65,7 @@ pipeline {
                 )]) {
 
                     bat """
-                    docker login -u %DOCKER_USER_VAR% -p %DOCKER_PASS%
+                    echo %DOCKER_PASS% | docker login -u %DOCKER_USER_VAR% --password-stdin
 
                     docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKER_USER%/%IMAGE_NAME%:%IMAGE_TAG%
                     docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKER_USER%/%IMAGE_NAME%:latest
@@ -88,10 +86,13 @@ pipeline {
 
                 docker run -d ^
                 --name %CONTAINER_NAME% ^
+                --restart unless-stopped ^
                 -p %HOST_PORT%:%APP_PORT% ^
                 %DOCKER_USER%/%IMAGE_NAME%:%IMAGE_TAG%
 
-                timeout /t 5
+                echo Waiting for container startup...
+                ping -n 6 127.0.0.1 > nul
+
                 docker ps | findstr %CONTAINER_NAME%
                 """
             }
@@ -100,14 +101,30 @@ pipeline {
         // ───────────── VERIFY ─────────────
         stage('✅ Verify') {
             steps {
-                bat """
-                timeout /t 3
-                curl -f http://localhost:%HOST_PORT%/health
-                """
+                script {
+                    def retries = 5
+                    def success = false
+
+                    for (int i = 0; i < retries; i++) {
+                        try {
+                            bat "curl -f http://localhost:${HOST_PORT}/health"
+                            echo "✅ Health check passed"
+                            success = true
+                            break
+                        } catch (Exception e) {
+                            echo "⚠️ Retry ${i+1} failed... waiting"
+                            bat "ping -n 4 127.0.0.1 > nul"
+                        }
+                    }
+
+                    if (!success) {
+                        error("❌ App failed health check")
+                    }
+                }
             }
         }
 
-        // ───────────── OPTIONAL: PUSH TO GITHUB ─────────────
+        // ───────────── OPTIONAL: PUSH BACK TO GITHUB ─────────────
         stage('📤 Push to GitHub (Optional)') {
             when {
                 branch 'main'
@@ -136,8 +153,9 @@ pipeline {
     post {
         success {
             echo "✅ SUCCESS: Build #${BUILD_NUMBER}"
-            echo "🌐 http://localhost:${HOST_PORT}"
+            echo "🌐 App URL: http://localhost:${HOST_PORT}"
         }
+
         failure {
             echo "❌ FAILED: Build #${BUILD_NUMBER}"
 
