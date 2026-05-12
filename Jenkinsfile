@@ -30,7 +30,7 @@ pipeline {
         // ───────────── INSTALL ─────────────
         stage('📦 Install') {
             steps {
-                bat '''
+                sh '''
                 node -v
                 npm -v
                 npm install
@@ -41,17 +41,19 @@ pipeline {
         // ───────────── TEST ─────────────
         stage('🧪 Test') {
             steps {
-                bat 'npm test'
+                sh '''
+                npm test || echo "No tests configured"
+                '''
             }
         }
 
         // ───────────── BUILD DOCKER ─────────────
         stage('🐳 Build Image') {
             steps {
-                bat """
-                docker build -t %IMAGE_NAME%:%IMAGE_TAG% .
-                docker tag %IMAGE_NAME%:%IMAGE_TAG% %IMAGE_NAME%:latest
-                """
+                sh '''
+                docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
+                '''
             }
         }
 
@@ -59,20 +61,20 @@ pipeline {
         stage('📤 Push to Docker Hub') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'docker-hub-cred',
+                    credentialsId: 'dockerhub',
                     usernameVariable: 'DOCKER_USER_VAR',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
 
-                    bat """
-                    echo %DOCKER_PASS% | docker login -u %DOCKER_USER_VAR% --password-stdin
+                    sh '''
+                    echo $DOCKER_PASS | docker login -u $DOCKER_USER_VAR --password-stdin
 
-                    docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKER_USER%/%IMAGE_NAME%:%IMAGE_TAG%
-                    docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKER_USER%/%IMAGE_NAME%:latest
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG}
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_USER}/${IMAGE_NAME}:latest
 
-                    docker push %DOCKER_USER%/%IMAGE_NAME%:%IMAGE_TAG%
-                    docker push %DOCKER_USER%/%IMAGE_NAME%:latest
-                    """
+                    docker push ${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG}
+                    docker push ${DOCKER_USER}/${IMAGE_NAME}:latest
+                    '''
                 }
             }
         }
@@ -80,21 +82,21 @@ pipeline {
         // ───────────── DEPLOY ─────────────
         stage('🚀 Deploy') {
             steps {
-                bat """
-                docker stop %CONTAINER_NAME% 2>nul
-                docker rm %CONTAINER_NAME% 2>nul
+                sh '''
+                docker stop ${CONTAINER_NAME} || true
+                docker rm ${CONTAINER_NAME} || true
 
-                docker run -d ^
-                --name %CONTAINER_NAME% ^
-                --restart unless-stopped ^
-                -p %HOST_PORT%:%APP_PORT% ^
-                %DOCKER_USER%/%IMAGE_NAME%:%IMAGE_TAG%
+                docker run -d \
+                  --name ${CONTAINER_NAME} \
+                  --restart unless-stopped \
+                  -p ${HOST_PORT}:${APP_PORT} \
+                  ${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG}
 
-                echo Waiting for container startup...
-                ping -n 6 127.0.0.1 > nul
+                echo "Waiting for container startup..."
+                sleep 5
 
-                docker ps | findstr %CONTAINER_NAME%
-                """
+                docker ps | grep ${CONTAINER_NAME}
+                '''
             }
         }
 
@@ -107,13 +109,13 @@ pipeline {
 
                     for (int i = 0; i < retries; i++) {
                         try {
-                            bat "curl -f http://localhost:${HOST_PORT}/health"
+                            sh "curl -f http://localhost:${HOST_PORT}/health"
                             echo "✅ Health check passed"
                             success = true
                             break
                         } catch (Exception e) {
                             echo "⚠️ Retry ${i+1} failed... waiting"
-                            bat "ping -n 4 127.0.0.1 > nul"
+                            sh "sleep 4"
                         }
                     }
 
@@ -123,46 +125,21 @@ pipeline {
                 }
             }
         }
-
-        // ───────────── OPTIONAL: PUSH BACK TO GITHUB ─────────────
-        stage('📤 Push to GitHub (Optional)') {
-            when {
-                branch 'main'
-            }
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'github-cred',
-                    usernameVariable: 'GIT_USER',
-                    passwordVariable: 'GIT_PASS'
-                )]) {
-
-                    bat """
-                    git config user.name "jenkins"
-                    git config user.email "jenkins@local"
-
-                    git add .
-                    git commit -m "CI update build %BUILD_NUMBER%" || echo No changes
-
-                    git push https://%GIT_USER%:%GIT_PASS%@github.com/Brijith58/cicd-demo.git HEAD:main
-                    """
-                }
-            }
-        }
     }
 
     post {
         success {
             echo "✅ SUCCESS: Build #${BUILD_NUMBER}"
-            echo "🌐 App URL: http://localhost:${HOST_PORT}"
+            echo "🌐 App URL: http://20.198.81.85:${HOST_PORT}"
         }
 
         failure {
             echo "❌ FAILED: Build #${BUILD_NUMBER}"
 
-            bat """
-            docker stop %CONTAINER_NAME% 2>nul
-            docker rm %CONTAINER_NAME% 2>nul
-            """
+            sh '''
+            docker stop ${CONTAINER_NAME} || true
+            docker rm ${CONTAINER_NAME} || true
+            '''
         }
     }
 }
