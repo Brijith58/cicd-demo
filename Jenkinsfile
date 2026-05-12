@@ -93,7 +93,7 @@ pipeline {
                   ${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG}
 
                 echo "Waiting for container startup..."
-                sleep 5
+                sleep 15
 
                 docker ps | grep ${CONTAINER_NAME}
                 '''
@@ -109,7 +109,7 @@ pipeline {
 
                     for (int i = 0; i < retries; i++) {
                         try {
-                            sh "curl -f http://localhost:${HOST_PORT}/health"
+                            sh "curl -f http://host.docker.internal:${HOST_PORT}/health"
                             echo "✅ Health check passed"
                             success = true
                             break
